@@ -87,6 +87,16 @@ fi
 
 exp_name="${VERL_EXP_NAME:-$(basename "${MODEL_ID,,}")-function-reward-minimal}"
 
+# Enable SkipManager (RolloutTqSkip) in the sync trainer CI, mirroring the
+# fully-async CI knobs in tests/special_e2e/run_fully_async_policy.sh.
+# Trainer V1 already arms SkipManager.init/set_step and @annotate_tq; this only
+# turns the skip.rollout_tq config on so dump/cache paths are exercised in CI.
+# param_sync_step adaptation for V1 lives in RolloutTqSkip (merged #7032).
+SKIP_ENABLE=${SKIP_ENABLE:-True}
+SKIP_DUMP_DIR=${SKIP_DUMP_DIR:-${HOME}/data/rollout_dump_sync}
+SKIP_STEPS=${SKIP_STEPS:-'[1]'}
+SKIP_ACTION=${SKIP_ACTION:-cache}
+
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator="${ADV_ESTIMATOR}" \
     data.train_files="${TRAIN_FILES}" \
@@ -151,8 +161,19 @@ python3 -m verl.trainer.main_ppo \
     trainer.resume_mode="${RESUME_MODE}" \
     trainer.total_epochs=2 \
     trainer.device=cuda \
-    trainer.total_training_steps="${TOTAL_TRAIN_STEPS}" $@ \
+    trainer.total_training_steps="${TOTAL_TRAIN_STEPS}" \
+    skip.rollout_tq.enable=${SKIP_ENABLE} \
+    skip.rollout_tq.dump_dir=${SKIP_DUMP_DIR} \
+    skip.rollout_tq.steps=${SKIP_STEPS} \
+    skip.rollout_tq.action=${SKIP_ACTION} \
+    $@ \
     | tee "${output_file}"
+
+# Surface dump layout in CI logs when skip is enabled (namespaced per project/exp).
+if [ "${SKIP_ENABLE}" = "True" ] || [ "${SKIP_ENABLE}" = "true" ]; then
+    echo "[SkipManager CI] dump dir listing under ${SKIP_DUMP_DIR}:"
+    ls -laR "${SKIP_DUMP_DIR}" 2>/dev/null || echo "[SkipManager CI] dump dir not created yet (cache miss path may still write during training)"
+fi
 
 if [ "${CUSTOM_REWARD_FN}" = "True" ]; then
     python3 tests/special_e2e/check_custom_rwd_fn.py --output_file="${output_file}"
